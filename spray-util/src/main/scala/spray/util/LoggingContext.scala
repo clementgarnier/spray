@@ -16,7 +16,7 @@
 
 package spray.util
 
-import akka.event.{ Logging, LoggingAdapter }
+import akka.event.{ LogSource, Logging, LoggingAdapter }
 import akka.actor._
 
 /**
@@ -43,8 +43,19 @@ object LoggingContext extends LoggingContextLowerOrderImplicit1 {
   }
 }
 
+case class SprayNamedLogSource(name: String, source: Any)
+
+object SprayNamedLogSource {
+  implicit val fromSprayNamedLogSource: LogSource[SprayNamedLogSource] = new LogSource[SprayNamedLogSource] {
+    def genString(s: SprayNamedLogSource) = s.name
+    override def getClazz(s: SprayNamedLogSource): Class[_] = s.source.getClass
+  }
+}
+
 private[util] sealed abstract class LoggingContextLowerOrderImplicit1 extends LoggingContextLowerOrderImplicit2 {
   this: LoggingContext.type ⇒
+
+  import SprayNamedLogSource.fromSprayNamedLogSource
 
   implicit def fromActorRefFactory(implicit refFactory: ActorRefFactory) =
     refFactory match {
@@ -56,13 +67,16 @@ private[util] sealed abstract class LoggingContextLowerOrderImplicit1 extends Lo
 
   def fromActorContext(context: ActorContext) = fromAdapter {
     val system = context.system
-    val path = context.self.path.toString
+    val actorRef = context.self
+    val path = actorRef.path.toString
     val settings = UtilSettings(system)
-    if (settings.logActorPathsWithDots) {
+    val name = if (settings.logActorPathsWithDots) {
       val fixedPath = path.substring(7).replace('/', '.') // drop the `akka://` prefix and replace slashes
-      val logSource = if (settings.logActorSystemName) system.toString + '.' + fixedPath else fixedPath
-      Logging(system.eventStream, logSource)
-    } else if (settings.logActorSystemName) Logging(system, path) else Logging(system.eventStream, path)
+      if (settings.logActorSystemName) system.toString + '.' + fixedPath else fixedPath
+    } else path
+    val logSource = SprayNamedLogSource(name, actorRef)
+
+    if (settings.logActorSystemName) Logging(system, logSource) else Logging(system.eventStream, logSource)
   }
 }
 
